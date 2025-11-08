@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react';
 import Layout from '@/components/Layout';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import { apiService } from '@/services/api';
-import { Product, LoginResponse } from '@/types';
-import { getUser, isAdmin } from '@/utils/auth';
+import { Product, LoginResponse, UserRole } from '@/types';
+import { getUser, isAdmin, isManager, isSalesman } from '@/utils/auth';
 import LoadingSpinner from '@/components/LoadingSpinner';
 import { StatCardSkeleton } from '@/components/SkeletonLoader';
 import Link from 'next/link';
@@ -52,17 +52,25 @@ export default function DashboardPage() {
     approvedProducts: 0,
     godownStock: 0,
     shopStock: 0,
+    totalTerritories: 0,
+    totalShops: 0,
+    totalManagers: 0,
+    totalSalesmen: 0,
   });
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState<LoginResponse | null>(null);
   const [mounted, setMounted] = useState(false);
   const [userIsAdmin, setUserIsAdmin] = useState(false);
+  const [userIsManager, setUserIsManager] = useState(false);
+  const [userIsSalesman, setUserIsSalesman] = useState(false);
 
   useEffect(() => {
     setMounted(true);
     const currentUser = getUser();
     setUser(currentUser);
     setUserIsAdmin(isAdmin());
+    setUserIsManager(isManager());
+    setUserIsSalesman(isSalesman());
   }, []);
 
   useEffect(() => {
@@ -73,23 +81,136 @@ export default function DashboardPage() {
 
   const loadStats = async () => {
     try {
-      const [productsRes, godownRes, shopRes] = await Promise.all([
-        apiService.getProducts(),
-        apiService.getGodownStock(),
-        apiService.getShopStock(),
-      ]);
+      const user = getUser();
+      const userRole = user?.role;
+      
+      let productsRes, territoriesRes, shopsRes, usersRes, godownStock = 0, shopStock = 0;
 
-      const products = productsRes.data || [];
-      const godown = godownRes.data || [];
-      const shop = shopRes.data || [];
+      if (userRole === UserRole.ADMIN) {
+        // Admin can see everything
+        [productsRes, territoriesRes, shopsRes, usersRes] = await Promise.all([
+          apiService.getProducts(),
+          apiService.getTerritories(),
+          apiService.getShops(),
+          apiService.getUsers(),
+        ]);
 
-      setStats({
-        totalProducts: products.length,
-        pendingProducts: products.filter((p) => p.status === 'PENDING').length,
-        approvedProducts: products.filter((p) => p.status === 'APPROVED').length,
-        godownStock: godown.reduce((sum, p) => sum + (p.godownStock || 0), 0),
-        shopStock: shop.reduce((sum, p) => sum + (p.shopStock || 0), 0),
-      });
+        const territories = territoriesRes.data || [];
+        const shops = shopsRes.data || [];
+        const users = usersRes.data || [];
+
+        // Get godown stock
+        try {
+          const godownsRes = await apiService.getGodowns();
+          if (godownsRes.data && godownsRes.data.length > 0) {
+            const godownStockRes = await apiService.getGodownStockWithQuantity(godownsRes.data[0].id);
+            godownStock = godownStockRes.data.reduce((sum, p) => sum + (p.godownStock || 0), 0);
+          }
+        } catch (error) {
+          console.error('Error loading godown stock:', error);
+        }
+
+        // Get shop stock
+        try {
+          if (shops.length > 0) {
+            const shopStockRes = await apiService.getShopStockWithQuantity(shops[0].id);
+            shopStock = shopStockRes.data.reduce((sum, p) => sum + (p.shopStock || 0), 0);
+          }
+        } catch (error) {
+          console.error('Error loading shop stock:', error);
+        }
+
+        const products = productsRes.data || [];
+        setStats({
+          totalProducts: products.length,
+          pendingProducts: products.filter((p) => p.status === 'PENDING').length,
+          approvedProducts: products.filter((p) => p.status === 'APPROVED').length,
+          godownStock,
+          shopStock,
+          totalTerritories: territories.length,
+          totalShops: shops.length,
+          totalManagers: users.filter((u) => u.role === UserRole.MANAGER).length,
+          totalSalesmen: users.filter((u) => u.role === UserRole.SALESMAN).length,
+        });
+      } else if (userRole === UserRole.MANAGER) {
+        // Manager sees their territory stats
+        [productsRes, shopsRes] = await Promise.all([
+          apiService.getProducts(),
+          apiService.getShops(),
+        ]);
+
+        const products = productsRes.data || [];
+        const shops = shopsRes.data || [];
+
+        // Get godown stock for manager's territory
+        try {
+          const godownsRes = await apiService.getGodowns();
+          if (godownsRes.data && godownsRes.data.length > 0) {
+            const godownStockRes = await apiService.getGodownStockWithQuantity(godownsRes.data[0].id);
+            godownStock = godownStockRes.data.reduce((sum, p) => sum + (p.godownStock || 0), 0);
+          }
+        } catch (error) {
+          console.error('Error loading godown stock:', error);
+        }
+
+        // Get shop stock for manager's territory
+        try {
+          if (shops.length > 0) {
+            const shopStockRes = await apiService.getShopStockWithQuantity(shops[0].id);
+            shopStock = shopStockRes.data.reduce((sum, p) => sum + (p.shopStock || 0), 0);
+          }
+        } catch (error) {
+          console.error('Error loading shop stock:', error);
+        }
+
+        setStats({
+          totalProducts: products.length,
+          pendingProducts: products.filter((p) => p.status === 'PENDING').length,
+          approvedProducts: products.filter((p) => p.status === 'APPROVED').length,
+          godownStock,
+          shopStock,
+          totalTerritories: 1, // Manager has one territory
+          totalShops: shops.length,
+          totalManagers: 0,
+          totalSalesmen: 0,
+        });
+      } else if (userRole === UserRole.SALESMAN) {
+        // Salesman sees their shop stats
+        productsRes = await apiService.getProducts();
+        const products = productsRes.data || [];
+
+        if (user?.shopId) {
+          try {
+            const shopStockRes = await apiService.getShopStock(user.shopId);
+            shopStock = shopStockRes.data.reduce((sum, p) => sum + (p.shopStock || 0), 0);
+          } catch (error) {
+            console.error('Error loading shop stock:', error);
+          }
+        }
+
+        // Get godown stock from their territory
+        try {
+          const godownsRes = await apiService.getGodowns();
+          if (godownsRes.data && godownsRes.data.length > 0) {
+            const godownStockRes = await apiService.getGodownStockWithQuantity(godownsRes.data[0].id);
+            godownStock = godownStockRes.data.reduce((sum, p) => sum + (p.godownStock || 0), 0);
+          }
+        } catch (error) {
+          console.error('Error loading godown stock:', error);
+        }
+
+        setStats({
+          totalProducts: products.length,
+          pendingProducts: products.filter((p) => p.status === 'PENDING').length,
+          approvedProducts: products.filter((p) => p.status === 'APPROVED').length,
+          godownStock,
+          shopStock,
+          totalTerritories: user?.territoryId ? 1 : 0, // Salesman belongs to one territory
+          totalShops: user?.shopId ? 1 : 0, // Salesman works at one shop
+          totalManagers: 0,
+          totalSalesmen: 0,
+        });
+      }
     } catch (error) {
       console.error('Error loading stats:', error);
     } finally {
@@ -102,19 +223,25 @@ export default function DashboardPage() {
       <Layout>
         <div className="max-w-7xl mx-auto w-full space-y-6">
           {/* Welcome Section */}
-          <div className="bg-gradient-to-r from-indigo-600 to-purple-600 rounded-xl shadow-lg p-6 md:p-8 text-white">
-            <h1 className="text-2xl md:text-3xl font-bold mb-2">
+          <div className="space-y-2">
+            <h1 className="text-3xl md:text-4xl font-bold text-gray-900">
               {mounted && user ? `Welcome back, ${user.username}!` : 'Welcome!'}
             </h1>
-            <p className="text-indigo-100 text-sm md:text-base">
-              Here's an overview of your inventory and stock management
+            <p className="text-gray-600 text-base md:text-lg">
+              {mounted && userIsManager && user?.territoryName ? (
+                <>Managing <span className="font-semibold text-gray-900">{user.territoryName}</span> territory</>
+              ) : mounted && userIsSalesman && user?.shopName ? (
+                <>Working at <span className="font-semibold text-gray-900">{user.shopName}</span>{user?.territoryName && <> in <span className="font-semibold text-gray-900">{user.territoryName}</span> territory</>}</>
+              ) : (
+                "Monitor your inventory, track stock levels, and manage your operations efficiently"
+              )}
             </p>
           </div>
 
           {/* Stats Grid */}
           {loading ? (
             <div className="grid grid-cols-1 gap-4 sm:gap-6 sm:grid-cols-2 lg:grid-cols-3">
-              {[...Array(5)].map((_, i) => (
+              {[...Array(userIsAdmin ? 8 : 5)].map((_, i) => (
                 <StatCardSkeleton key={i} />
               ))}
             </div>
@@ -129,7 +256,7 @@ export default function DashboardPage() {
                 href="/products"
               />
               
-              {userIsAdmin && (
+              {(userIsAdmin || userIsManager) && (
                 <StatCard
                   title="Pending Approval"
                   value={stats.pendingProducts}
@@ -155,7 +282,7 @@ export default function DashboardPage() {
                 icon="🏭"
                 color="#3b82f6"
                 bgColor="bg-blue-100"
-                href="/godown"
+                href="/godowns"
               />
               
               <StatCard
@@ -164,8 +291,73 @@ export default function DashboardPage() {
                 icon="🏪"
                 color="#8b5cf6"
                 bgColor="bg-purple-100"
-                href="/shop"
+                href="/shops"
               />
+
+              {userIsAdmin && (
+                <>
+                  <StatCard
+                    title="Total Territories"
+                    value={stats.totalTerritories}
+                    icon="🗺️"
+                    color="#ec4899"
+                    bgColor="bg-pink-100"
+                    href="/territories"
+                  />
+                  
+                  <StatCard
+                    title="Total Shops"
+                    value={stats.totalShops}
+                    icon="🏪"
+                    color="#f97316"
+                    bgColor="bg-orange-100"
+                    href="/shops"
+                  />
+                  
+                  <StatCard
+                    title="Total Managers"
+                    value={stats.totalManagers}
+                    icon="👔"
+                    color="#06b6d4"
+                    bgColor="bg-cyan-100"
+                    href="/users"
+                  />
+                  
+                  <StatCard
+                    title="Total Salesmen"
+                    value={stats.totalSalesmen}
+                    icon="👤"
+                    color="#84cc16"
+                    bgColor="bg-lime-100"
+                    href="/users"
+                  />
+                </>
+              )}
+
+              {userIsManager && (
+                <>
+                  <StatCard
+                    title="Total Shops"
+                    value={stats.totalShops}
+                    icon="🏪"
+                    color="#f97316"
+                    bgColor="bg-orange-100"
+                    href="/shops"
+                  />
+                </>
+              )}
+
+              {userIsSalesman && (
+                <>
+                  <StatCard
+                    title="Territory"
+                    value={stats.totalTerritories}
+                    icon="🗺️"
+                    color="#ec4899"
+                    bgColor="bg-pink-100"
+                  />
+                </>
+              )}
             </div>
           )}
         </div>

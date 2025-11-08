@@ -3,8 +3,8 @@
 import { useRouter, usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { removeAuthToken, getUser } from '@/utils/auth';
-import { LoginResponse } from '@/types';
+import { removeAuthToken, getUser, isAdmin, isManager, isSalesman } from '@/utils/auth';
+import { LoginResponse, UserRole } from '@/types';
 import ToastContainer from './Toast';
 import { showToast } from './Toast';
 
@@ -46,12 +46,44 @@ export default function Layout({ children }: LayoutProps) {
     return pathname === path;
   };
 
-  const navigation = [
-    { name: 'Dashboard', href: '/dashboard', icon: '📊' },
-    { name: 'Products', href: '/products', icon: '📦' },
-    { name: 'Godown', href: '/godown', icon: '🏭' },
-    { name: 'Shop', href: '/shop', icon: '🏪' },
-  ];
+  const getNavigation = () => {
+    const baseNav = [
+      { name: 'Dashboard', href: '/dashboard', icon: '📊', roles: [UserRole.ADMIN, UserRole.MANAGER, UserRole.SALESMAN] },
+      { name: 'Products', href: '/products', icon: '📦', roles: [UserRole.ADMIN, UserRole.MANAGER, UserRole.SALESMAN] },
+    ];
+
+    if (user?.role === UserRole.ADMIN) {
+      return [
+        ...baseNav,
+        { name: 'Territories', href: '/territories', icon: '🗺️', roles: [UserRole.ADMIN] },
+        { name: 'Shops', href: '/shops', icon: '🏪', roles: [UserRole.ADMIN] },
+        { name: 'Godowns', href: '/godowns', icon: '🏭', roles: [UserRole.ADMIN] },
+        { name: 'Employees', href: '/users', icon: '👥', roles: [UserRole.ADMIN] },
+      ];
+    }
+
+    if (user?.role === UserRole.MANAGER) {
+      return [
+        ...baseNav,
+        { name: 'Shops', href: '/shops', icon: '🏪', roles: [UserRole.MANAGER] },
+        { name: 'Godowns', href: '/godowns', icon: '🏭', roles: [UserRole.MANAGER] },
+      ];
+    }
+
+    if (user?.role === UserRole.SALESMAN) {
+      return [
+        ...baseNav,
+        { name: 'Shop Stock', href: '/shops', icon: '🏪', roles: [UserRole.SALESMAN] },
+        { name: 'Godown Stock', href: '/godowns', icon: '🏭', roles: [UserRole.SALESMAN] },
+      ];
+    }
+
+    return baseNav;
+  };
+
+  const navigation = getNavigation().filter(item => 
+    !item.roles || item.roles.includes(user?.role as UserRole)
+  );
 
   return (
     <div className="h-screen bg-gray-50 flex overflow-hidden">
@@ -76,7 +108,7 @@ export default function Layout({ children }: LayoutProps) {
               <h1 className="text-lg font-bold text-gray-900 leading-tight">
                 Global Sanitary Bazar
               </h1>
-              <span className="text-xs text-gray-500">Resource Planning</span>
+              <span className="text-xs text-gray-500">Stock Management</span>
             </div>
             <button
               onClick={() => setSidebarOpen(false)}
@@ -130,7 +162,7 @@ export default function Layout({ children }: LayoutProps) {
               </div>
               <button
                 onClick={handleLogout}
-                className="w-full flex items-center justify-center px-4 py-2 text-sm font-medium text-red-600 bg-red-50 rounded-lg hover:bg-red-100 transition-colors"
+                className="w-full flex items-center justify-center px-4 py-2.5 text-sm font-semibold text-red-600 bg-red-50 rounded-lg hover:bg-red-100 transition-all duration-200 shadow-sm hover:shadow-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
               >
                 <svg
                   className="w-5 h-5 mr-2"

@@ -28,9 +28,24 @@ export const isAdmin = (): boolean => {
   return user?.role === UserRole.ADMIN;
 };
 
+export const isManager = (): boolean => {
+  const user = getUser();
+  return user?.role === UserRole.MANAGER;
+};
+
 export const isSalesman = (): boolean => {
   const user = getUser();
   return user?.role === UserRole.SALESMAN;
+};
+
+export const getTerritoryId = (): number | undefined => {
+  const user = getUser();
+  return user?.territoryId;
+};
+
+export const getShopId = (): number | undefined => {
+  const user = getUser();
+  return user?.shopId;
 };
 
 export const isAuthenticated = (): boolean => {
